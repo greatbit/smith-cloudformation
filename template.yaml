@@ -1,0 +1,614 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: An infrastructure to execute tests in a serverless cloud"
+
+Mappings:
+  # Hard values for the subnet masks. These masks define
+  # the range of internal IP addresses that can be assigned.
+  # The VPC can have all IP's from 10.0.0.0 to 10.0.255.255
+  # There are four subnets which cover the ranges:
+  #
+  # 10.0.0.0 - 10.0.0.255
+  # 10.0.1.0 - 10.0.1.255
+  # 10.0.2.0 - 10.0.2.255
+  # 10.0.3.0 - 10.0.3.255
+  #
+  # If you need more IP addresses (perhaps you have so many
+  # instances that you run out) then you can customize these
+  # ranges to add more
+  SubnetConfig:
+    VPC:
+      CIDR: '10.0.0.0/16'
+    PublicOne:
+      CIDR: '10.0.0.0/24'
+    PublicTwo:
+      CIDR: '10.0.1.0/24'
+    PrivateOne:
+      CIDR: '10.0.2.0/24'
+    PrivateTwo:
+      CIDR: '10.0.3.0/24'
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !FindInMap ['SubnetConfig', 'VPC', 'CIDR']
+
+  # Two public subnets, where containers can have public IP addresses
+  PublicSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap ['SubnetConfig', 'PublicOne', 'CIDR']
+      MapPublicIpOnLaunch: true
+  PublicSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap ['SubnetConfig', 'PublicTwo', 'CIDR']
+      MapPublicIpOnLaunch: true
+
+  # Two private subnets where containers will only have private
+  # IP addresses, and will only be reachable by other members of the
+  # VPC
+  PrivateSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 0
+          - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap ['SubnetConfig', 'PrivateOne', 'CIDR']
+  PrivateSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+          - 1
+          - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap ['SubnetConfig', 'PrivateTwo', 'CIDR']
+
+
+
+
+
+
+
+  # Setup networking resources for the public subnets. Containers
+  # in the public subnets have public IP addresses and the routing table
+  # sends network traffic via the internet gateway.
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachement:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref 'VPC'
+      InternetGatewayId: !Ref 'InternetGateway'
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachement
+    Properties:
+      RouteTableId: !Ref 'PublicRouteTable'
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref 'InternetGateway'
+  PublicSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetOne
+      RouteTableId: !Ref PublicRouteTable
+  PublicSubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetTwo
+      RouteTableId: !Ref PublicRouteTable
+
+
+  # Setup networking resources for the private subnets. Containers
+  # in these subnets have only private IP addresses, and must use a NAT
+  # gateway to talk to the internet. We launch two NAT gateways, one for
+  # each private subnet.
+  NatGatewayOneAttachment:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachement
+    Properties:
+      Domain: vpc
+  NatGatewayTwoAttachment:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachement
+    Properties:
+      Domain: vpc
+  NatGatewayOne:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayOneAttachment.AllocationId
+      SubnetId: !Ref PublicSubnetOne
+  NatGatewayTwo:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayTwoAttachment.AllocationId
+      SubnetId: !Ref PublicSubnetTwo
+  PrivateRouteTableOne:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+  PrivateRouteOne:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableOne
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayOne
+  PrivateRouteTableOneAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableOne
+      SubnetId: !Ref PrivateSubnetOne
+  PrivateRouteTableTwo:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+  PrivateRouteTwo:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableTwo
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayTwo
+  PrivateRouteTableTwoAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableTwo
+      SubnetId: !Ref PrivateSubnetTwo
+
+
+  # OPTIONAL: VPC Endpoint for DynamoDB
+  # If a container needs to access DynamoDB this allows a container in the private subnet
+  # to talk to DynamoDB directly without needing to go via the NAT gateway. This reduces
+  # the amount of bandwidth through the gateway, meaning that the gateway is free to serve
+  # your other traffic.
+  DynamoDBEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Principal: "*"
+            Resource: "*"
+      RouteTableIds:
+        - !Ref 'PrivateRouteTableOne'
+        - !Ref 'PrivateRouteTableTwo'
+      ServiceName: !Join [ "", [ "com.amazonaws.", { "Ref": "AWS::Region" }, ".dynamodb" ] ]
+      VpcId: !Ref 'VPC'
+
+
+  PublicApiGatewaySG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access to the public facing load balancer
+      VpcId: !Ref 'VPC'
+      SecurityGroupIngress:
+        # Allow access to ALB from anywhere on the internet
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+
+  # A security group for the containers we will run in Fargate.
+  # Three rules, allowing network traffic from a public facing load
+  # balancer, a private internal load balancer, and from other members
+  # of the security group.
+  #
+  # Remove any of the following ingress rules that are not needed.
+  FargateContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access to the Fargate containers
+      VpcId: !Ref 'VPC'
+  EcsSecurityGroupIngressFromPublicALB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from the public ALB
+      GroupId: !Ref 'FargateContainerSecurityGroup'
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref 'PublicApiGatewaySG'
+#  EcsSecurityGroupIngressFromPrivateALB:
+#    Type: AWS::EC2::SecurityGroupIngress
+#    Properties:
+#      Description: Ingress from the private ALB
+#      GroupId: !Ref 'FargateContainerSecurityGroup'
+#      IpProtocol: -1
+#      SourceSecurityGroupId: !Ref 'PrivateLoadBalancerSG'
+  EcsSecurityGroupIngressFromSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from other containers in the same security group
+      GroupId: !Ref 'FargateContainerSecurityGroup'
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref 'FargateContainerSecurityGroup'
+
+  AmazonAPIGatewayInvokeFullAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+            Condition: {}
+      Path: /
+      Policies:
+        - PolicyName: ApiGateway
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - '*'
+
+  SQSExecutables:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: smith-executables
+
+  SQSResults:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: smith-results
+
+  ResultSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Endpoint:
+            Fn::GetAtt:
+              - "SQSResults"
+              - "Arn"
+          Protocol: "sqs"
+      TopicName: "ResultSNSTopic"
+
+  SqsSnsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Id: SqsSnsPolicy
+        Statement:
+          - Sid: Allow-SNS-SendMessage
+            Effect: Allow
+            Principal: "*"
+            Action:
+              - sqs:SendMessage
+            Resource: !GetAtt SQSResults.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref ResultSNSTopic
+      Queues:
+        - !Ref SQSResults
+
+  BasicExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: BasicExecutionRole
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com, ecs.amazonaws.com, ecs-tasks.amazonaws.com, sns.amazonaws.com]
+            Action: sts:AssumeRole
+            Condition: {}
+      Path: /
+      Policies:
+        - PolicyName: SQSExecutables
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+
+                  - ecs:ListTasks
+                  - ecs:RunTask
+                  - ecs:StartTask
+                  - ecs:StopTask
+
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+
+                  - s3:*
+
+                  - sns:Publish
+                  - sns:Subscribe
+
+                  - iam:PassRole
+                Resource:
+                  - '*'
+
+
+  ArtifactsReleaseS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'smith-artifacts-release-${AWS::Region}-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+    DeletionPolicy: Delete
+
+  ArtifactsSnapshoptS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'smith-artifacts-snapshot-${AWS::Region}-${AWS::AccountId}'
+    DeletionPolicy: Delete
+
+  SettingsS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'smith-private-settings-${AWS::Region}-${AWS::AccountId}'
+    DeletionPolicy: Delete
+
+  ReportsS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'smith-reports-${AWS::Region}-${AWS::AccountId}'
+    DeletionPolicy: Delete
+
+
+
+  TasksSplitterLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: TasksSplitterLambda
+      Description: Splits tasks into separate SQS messages
+      Handler: index.handler
+      Runtime: nodejs10.x
+      Role: !GetAtt BasicExecutionRole.Arn
+      Timeout: 120
+      Environment:
+        Variables:
+          roleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/ECSRole'
+      Code:
+        ZipFile: |
+          exports.handler = function(event, context, callback) {
+
+              var region = context.invokedFunctionArn.split(":")[3];
+              var accountId = context.invokedFunctionArn.split(":")[4];
+
+              var QUEUE_URL = 'https://sqs.'+ region + '.amazonaws.com/' + accountId + '/smith-executables';
+              var AWS = require('aws-sdk');
+              var sqs = new AWS.SQS({region : region});
+              var sts = new AWS.STS();
+              sts.assumeRole({
+                RoleArn: process.env.roleArn,
+                RoleSessionName: 'awssdk'
+              }, function(err, data) {
+                if (err) { // an error occurred
+                  console.log('Cannot assume role');
+                  console.log(err, err.stack);
+                } else { // successful response
+                  var launch = JSON.parse(event.body);
+                  (launch.executables || []).forEach(function(executable){
+                      executable.launchId = launch.launchId || new Date().toString();
+                      executable.region = region;
+                      executable.accountId = accountId;
+                      executable.accessKey = data.Credentials.AccessKeyId;
+                      executable.secretKey = data.Credentials.SecretAccessKey;
+                      executable.sessionToken = data.Credentials.SessionToken;
+                      var params = {
+                          MessageBody: JSON.stringify(executable),
+                          QueueUrl: QUEUE_URL
+                        };
+                      sqs.sendMessage(params, function(err,data){
+                        if(err) {
+                          console.log('error:',"Fail Send Message" + err);
+                          context.done('error', "ERROR Put SQS");  // ERROR with message
+                        } else{
+                          console.log('data:',data.MessageId);
+                        }
+                    });
+                  })
+
+                  const response = {
+                      statusCode: 200,
+                      body: event.body
+                  };
+                  callback(null, response);
+                  context.done(null,'');  // SUCCESS
+                }
+              });
+
+
+          };
+
+  # This is an IAM role which authorizes ECS to manage resources on the account
+  ECSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ECSRole
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com, ecs.amazonaws.com, ecs-tasks.amazonaws.com, sns.amazonaws.com]
+              AWS: "*"
+            Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: ecs-service
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  # Rules which allow ECS to attach network interfaces to instances
+                  # on your behalf in order for awsvpc networking mode to work right
+                  - ec2:AttachNetworkInterface
+                  - ec2:CreateNetworkInterface
+                  - ec2:CreateNetworkInterfacePermission
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DeleteNetworkInterfacePermission
+                  - ec2:Describe*
+                  - ec2:DetachNetworkInterface
+
+                  # Rules which allow ECS to update load balancers on your behalf
+                  # with the information sabout how to send traffic to your containers
+                  - elasticloadbalancing:DeregisterInstancesFromLoadBalancer
+                  - elasticloadbalancing:DeregisterTargets
+                  - elasticloadbalancing:Describe*
+                  - elasticloadbalancing:RegisterInstancesWithLoadBalancer
+                  - elasticloadbalancing:RegisterTargets
+
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+
+                  - iam:PassRole
+
+                  - s3:*
+
+                  - sns:Publish
+                  - sns:Subscribe
+
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: '*'
+
+  ApiGatewayApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Body:
+        swagger: '2.0'
+        info:
+          description: Tasks Smith Endpoint
+          title: !Ref AWS::StackName
+          version: 1.0.0
+        schemes:
+          - https
+        paths:
+          /tasks:
+            post:
+              x-amazon-apigateway-integration:
+                responses: {}
+                uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${TasksSplitterLambda.Arn}/invocations
+                credentials: !GetAtt AmazonAPIGatewayInvokeFullAccessRole.Arn
+                passthroughBehavior: when_no_match
+                httpMethod: POST
+                type: aws_proxy
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref ApiGatewayApi
+      StageName: prod
+
+  ECSLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: "ecs-logs"
+
+  ExecutorCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: executor-cluster
+
+  MavenExecutorTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Cpu: "1024"
+      Memory: "2048"
+      RequiresCompatibilities:
+        - "EC2"
+        - "FARGATE"
+      ContainerDefinitions:
+        - Name: "maven-executor"
+          Image: "greatbit/smith-maven"
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: ecs-logs
+              awslogs-region: !Sub ${AWS::Region}
+              awslogs-stream-prefix: exec
+      Family: MavenExecutorTask
+      NetworkMode: awsvpc
+      ExecutionRoleArn: !GetAtt ECSRole.Arn
+      TaskRoleArn: !GetAtt ECSRole.Arn
+
+  TasksExecutorLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: TasksExecutorLambda
+      Description: Executes ECS job
+      Handler: index.handler
+      Runtime: nodejs10.x
+      Timeout: 30
+      Role: !GetAtt BasicExecutionRole.Arn
+      InlineCode: !Sub  |
+        exports.handler = function(event, context, callback) {
+                console.log(JSON.stringify(event.Records));
+                var AWS = require('aws-sdk');
+                var region = context.invokedFunctionArn.split(':')[3];
+                var ecs = new AWS.ECS({apiVersion: '2014-11-13'});
+                var ecsParams = {
+                    cluster: 'executor-cluster',
+                    taskDefinition: 'MavenExecutorTask',
+                    count: 1,
+                    launchType: "FARGATE",
+                    networkConfiguration: {
+                        'awsvpcConfiguration': {
+                            'subnets':['${PrivateSubnetOne}'],
+                            'assignPublicIp': 'DISABLED'
+                        }
+                    },
+                    overrides: {
+                        containerOverrides: [
+                            {
+                                environment: [{'name':'SMITH_EXECUTABLE_DATA', 'value' : event.Records[0].body}],
+                                name: 'maven-executor'
+                            }
+                        ]
+                    }
+                };
+                ecs.runTask(ecsParams, function (err, data) {
+                    if (err) { console.warn('error: ', 'Error while starting task: ' + err); }
+                    else { console.info('Task MavenExecutorTask started: ' + JSON.stringify(data.tasks))}
+                });
+        };
+
+      ReservedConcurrentExecutions: 5
+      Events:
+        SqsEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt SQSExecutables.Arn
+            BatchSize: 1
+
+
+Outputs:
+  NodeServiceEndpoint:
+    Description: API Endpoint
+    Value: !Sub https://${ApiGatewayApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod/tasks
