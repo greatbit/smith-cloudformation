@@ -119,4 +119,8 @@ Thats it. Run your tests using API with the data format above.
 But the easiest way is to run tests through QuAck (testquack.com).
 QuAck allows you to import tests into the system and features Smith Runner. Smith Runner is a plugin that allows to run tests througb QuAck UI in Smith and get and store results.
 
+## Example
+Here you'll find tests examples that are being uploaded to QuAck and Smith. This allows using Smith Launher plugin in QuAck to run tests and store results in QuAck.
+https://github.com/greatbit/smith-junit-maven-tests-example
+
 
