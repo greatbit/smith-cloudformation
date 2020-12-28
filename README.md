@@ -52,6 +52,21 @@ In order to do that - add the following plugin to your tests:
 </plugin>
 ```
 
+and add distributeion management pointing to S3 buckets created by Cloud Formation Template
+
+```
+<distributionManagement>
+    <snapshotRepository>
+        <id>my-repo-bucket-snapshot</id>
+        <url>s3://smith-artifacts-snapshot-[REGION]-[ACCOUNT_ID]</url>
+    </snapshotRepository>
+    <repository>
+        <id>my-repo-bucket-release</id>
+        <url>s3://smith-artifacts-release-[REGION]-[ACCOUNT_ID]</url>
+    </repository>
+</distributionManagement>
+```
+
 2. Your tests should be available to Smith. Here you have 3 optioms:
 
 * Your tests are available in Maven Central. Doubtfully it will be the case but if so - you don't need to do anything more
