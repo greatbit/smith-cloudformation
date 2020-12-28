@@ -11,7 +11,7 @@ This allows to run as many tests as you want in parallel without the need of kee
 
 E.g. - template will create endpoint like
 
-https://n7bovw913i.execute-api.us-east-1.amazonaws.com/prod/tasks
+https://[SOME_RANDOM_HASH].execute-api.us-east-1.amazonaws.com/prod/tasks
 
 Which can take POST requests with data of the following format:
 
