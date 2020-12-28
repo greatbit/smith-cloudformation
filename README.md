@@ -85,12 +85,33 @@ and add distributeion management pointing to S3 buckets created by Cloud Formati
 ...
 </build>
 ```
-It will use standard AWS authentication 
-https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/credentials.html
-and upload test jars to your S3 bucket as if it was a repository
+
+Add AWS credentials to your ~/.m2/settings.xml file:
+```
+<server>
+    <id>my-repo-bucket-snapshot</id>
+    <username>AWS_ACCESS_KEY</username>
+    <password>AWS_SECRET_KEY</password>
+    <configuration>
+        <region>us-east-1</region>
+    </configuration>
+</server>
+<server>
+    <id>my-repo-bucket-release</id>
+    <username>AWS_ACCESS_KEY</username>
+    <password>AWS_SECRET_KEY</password>
+    <configuration>
+        <region>us-east-1</region>
+    </configuration>
+</server>
+```
 
 * Another way is to put your maven settings.xml file into "smith-private-settings-[REGION]-[ACCOUNT_ID]" bucket created by the template. If Smith will find settings.xml there - it will use it. 
 In settings.xml you can specify alternative path to your maven repository
+
+## Deploy
+Deploy your tests using 
+mvn clean deploy
 
 ## Run
 Thats it. Run your tests using API with the data format above.
